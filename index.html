@@ -2,200 +2,246 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>💕</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  * { margin: 0; padding: 0; }
   body {
     background: #000;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 100dvh;
     overflow: hidden;
     touch-action: none;
+    width: 100vw;
+    height: 100dvh;
   }
-  #heartCanvas {
+  canvas {
     display: block;
-    width: min(100vw, 100vh * 4/3);
-    height: min(100vh, 100vw * 3/4);
+    width: 100vw;
+    height: 100dvh;
+    cursor: pointer;
   }
 </style>
 </head>
 <body>
-<canvas id="heartCanvas"></canvas>
+<canvas id="c"></canvas>
 <script>
-const CANVAS_WIDTH = 640;
-const CANVAS_HEIGHT = 480;
-const CANVAS_CENTER_X = CANVAS_WIDTH / 2;
-const CANVAS_CENTER_Y = CANVAS_HEIGHT / 2;
-const IMAGE_ENLARGE = 11;
-const HEART_COLOR = "#FF99CC";
+// ============================================================
+//  Constants
+// ============================================================
+const W = 900;
+const H = 680;
+const CX = W / 2;
+const CY = H / 2;
+const SCALE = 14;
+const COLOR = "#FF99CC";
+const GRAVITY = 0.08;
+const SPRING_K = 0.025;
+const DAMPING = 0.94;
+const EXPLOSION_FORCE = 20;
 
-// ---- math helpers ----
+// ============================================================
+//  Canvas setup
+// ============================================================
+const canvas = document.getElementById("c");
+canvas.width = W;
+canvas.height = H;
+const ctx = canvas.getContext("2d");
 
-function heartFn(t, shrinkRatio = IMAGE_ENLARGE) {
+// ============================================================
+//  Heart math
+// ============================================================
+function heartPos(t, s) {
+  s = s === undefined ? SCALE : s;
   let x = 16 * Math.pow(Math.sin(t), 3);
   let y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
-  x = x * shrinkRatio + CANVAS_CENTER_X;
-  y = y * shrinkRatio + CANVAS_CENTER_Y;
-  return { x: Math.round(x), y: Math.round(y) };
+  return { x: Math.round(x * s + CX), y: Math.round(y * s + CY) };
 }
 
-function scatterInside(x, y, beta = 0.15) {
-  const ratioX = -beta * Math.log(Math.random());
-  const ratioY = -beta * Math.log(Math.random());
+function scatterInside(x, y, beta) {
   return {
-    x: x - ratioX * (x - CANVAS_CENTER_X),
-    y: y - ratioY * (y - CANVAS_CENTER_Y)
+    x: x + beta * Math.log(Math.random()) * (CX - x),
+    y: y + beta * Math.log(Math.random()) * (CY - y)
   };
 }
 
-function shrink(x, y, ratio) {
-  const dx = CANVAS_CENTER_X - x;
-  const dy = CANVAS_CENTER_Y - y;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-  const force = -1 / Math.pow(dist, 1.2);
-  const fx = ratio * force * dx + (Math.random() - 0.5) * 2;
-  const fy = ratio * force * dy + (Math.random() - 0.5) * 2;
-  return { x: x + fx, y: y + fy };
+function beatCurve(t) {
+  return (2 * Math.sin(4 * t)) / Math.PI;
 }
 
-function curve(p) {
-  return (4 * Math.sin(4 * p)) / (2 * Math.PI);
-}
-
-function calcPosition(x, y, ratio) {
-  const dx = CANVAS_CENTER_X - x;
-  const dy = CANVAS_CENTER_Y - y;
+function calcTarget(bx, by, ratio, rox, roy) {
+  const dx = bx - CX;
+  const dy = by - CY;
   const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 1) return { x: bx + rox, y: by + roy };
   const force = 1 / Math.pow(dist, 1.04);
-  const fx = ratio * force * dx + (Math.random() * 2 - 1);
-  const fy = ratio * force * dy + (Math.random() * 2 - 1);
-  return { x: x - fx, y: y - fy };
+  return {
+    x: bx - ratio * force * dx + rox,
+    y: by - ratio * force * dy + roy
+  };
 }
 
-// ---- Heart "class" ----
+// ============================================================
+//  Generate particles
+// ============================================================
+const particles = [];
 
-let _points = [];                     // {x,y}
-let _edgeDiffusionPoints = [];        // {x,y}
-let _centerDiffusionPoints = [];      // {x,y}
-let allPoints = {};                   // frame -> [{x,y,size}]
-const GENERATE_FRAME = 20;
-
-function build(number) {
+function build() {
+  const raw = [];
   const seen = new Set();
-  for (let i = 0; i < number; i++) {
+  for (let i = 0; i < 2500; i++) {
     const t = Math.random() * 2 * Math.PI;
-    const p = heartFn(t);
-    const key = p.x + ',' + p.y;
-    if (!seen.has(key)) {
-      seen.add(key);
-      _points.push(p);
-    }
+    const p = heartPos(t);
+    const k = p.x + "," + p.y;
+    if (!seen.has(k)) { seen.add(k); raw.push(p); }
   }
-  for (const p of _points) {
-    for (let i = 0; i < 3; i++) {
-      _edgeDiffusionPoints.push(scatterInside(p.x, p.y, 0.05));
-    }
-  }
-  for (let i = 0; i < 4000; i++) {
-    const p = _points[Math.floor(Math.random() * _points.length)];
-    _centerDiffusionPoints.push(scatterInside(p.x, p.y, 0.17));
-  }
-}
 
-function calc(frame) {
-  const ratio = 10 * curve(frame / 10 * Math.PI);
-  const haloRadius = 4 + 6 * (1 + curve(frame / 10 * Math.PI));
-  const haloNumber = 3000 + 4000 * Math.abs(Math.pow(curve(frame / 10 * Math.PI), 2));
-  const result = [];
-  // halo
-  const haloSeen = new Set();
-  for (let i = 0; i < haloNumber; i++) {
-    const t = Math.random() * 2 * Math.PI;
-    let p = heartFn(t, 11.6);
-    p = shrink(p.x, p.y, haloRadius);
-    const key = Math.round(p.x) + ',' + Math.round(p.y);
-    if (!haloSeen.has(key)) {
-      haloSeen.add(key);
-      result.push({
-        x: p.x + (Math.random() * 28 - 14),
-        y: p.y + (Math.random() * 28 - 14),
-        size: Math.random() < 0.5 ? 1 : 2
-      });
+  // raw outline
+  for (const p of raw) {
+    particles.push({ bx: p.x, by: p.y, sz: 1 + ((Math.random() * 3) | 0) });
+    // edge diffusion (3 per raw point)
+    for (let j = 0; j < 3; j++) {
+      const s = scatterInside(p.x, p.y, 0.05);
+      particles.push({ bx: s.x, by: s.y, sz: 1 + ((Math.random() * 2) | 0) });
     }
-  }
-  // outline
-  for (const p of _points) {
-    const np = calcPosition(p.x, p.y, ratio);
-    result.push({ x: np.x, y: np.y, size: 1 + Math.floor(Math.random() * 3) });
-  }
-  // edge diffusion
-  for (const p of _edgeDiffusionPoints) {
-    const np = calcPosition(p.x, p.y, ratio);
-    result.push({ x: np.x, y: np.y, size: 1 + Math.floor(Math.random() * 2) });
   }
   // center diffusion
-  for (const p of _centerDiffusionPoints) {
-    const np = calcPosition(p.x, p.y, ratio);
-    result.push({ x: np.x, y: np.y, size: 1 + Math.floor(Math.random() * 2) });
+  for (let i = 0; i < 4500; i++) {
+    const p = raw[(Math.random() * raw.length) | 0];
+    const s = scatterInside(p.x, p.y, 0.17);
+    particles.push({ bx: s.x, by: s.y, sz: 1 + ((Math.random() * 2) | 0) });
   }
-  allPoints[frame] = result;
+
+  // init physics state & pre-generate random offsets
+  for (const p of particles) {
+    p.x = p.bx;
+    p.y = p.by;
+    p.vx = 0;
+    p.vy = 0;
+    p.rox = (Math.random() - 0.5) * 2;
+    p.roy = (Math.random() - 0.5) * 2;
+    // each particle has a slight phase delay so they don't all snap at once
+    p.phase = Math.random() * 100;
+  }
 }
 
-// ---- init ----
+build();
+console.log("particles:", particles.length);
 
-build(2000);
-for (let f = 0; f < GENERATE_FRAME; f++) calc(f);
+// ============================================================
+//  Input
+// ============================================================
+let isDown = false;
+let mx = CX;
+let my = CY;
 
-// ---- canvas rendering ----
-
-const canvas = document.getElementById('heartCanvas');
-canvas.width = CANVAS_WIDTH;
-canvas.height = CANVAS_HEIGHT;
-const ctx = canvas.getContext('2d');
-
-const ORIGINAL_RATIO = CANVAS_WIDTH / CANVAS_HEIGHT;
-
-function resizeCanvas() {
-  const winW = window.innerWidth;
-  const winH = window.innerHeight;
-  let w, h;
-  if (winW / winH > ORIGINAL_RATIO) {
-    h = winH;
-    w = h * ORIGINAL_RATIO;
-  } else {
-    w = winW;
-    h = w / ORIGINAL_RATIO;
-  }
-  canvas.style.width = w + 'px';
-  canvas.style.height = h + 'px';
+function getCanvasXY(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: ((clientX - rect.left) / rect.width) * W,
+    y: ((clientY - rect.top) / rect.height) * H
+  };
 }
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
 
-let frame = 0;
+// Mouse
+canvas.addEventListener("mousedown", (e) => {
+  isDown = true;
+  const p = getCanvasXY(e.clientX, e.clientY);
+  mx = p.x; my = p.y;
+});
+canvas.addEventListener("mouseup", () => { isDown = false; });
+canvas.addEventListener("mouseleave", () => { isDown = false; });
 
-function draw() {
-  ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-  const pts = allPoints[frame % GENERATE_FRAME];
-  ctx.fillStyle = HEART_COLOR;
-  for (const p of pts) {
-    ctx.fillRect(p.x, p.y, p.size, p.size);
+// Touch
+canvas.addEventListener(
+  "touchstart",
+  (e) => {
+    e.preventDefault();
+    isDown = true;
+    const t = e.touches[0];
+    const p = getCanvasXY(t.clientX, t.clientY);
+    mx = p.x; my = p.y;
+  },
+  { passive: false }
+);
+canvas.addEventListener(
+  "touchend",
+  (e) => {
+    e.preventDefault();
+    isDown = false;
+  },
+  { passive: false }
+);
+canvas.addEventListener("touchcancel", () => { isDown = false; });
+
+// ============================================================
+//  Physics & render loop
+// ============================================================
+let time = 0;
+let frameCount = 0;
+
+function tick() {
+  time += 0.016;
+  frameCount++;
+  const ratio = 10 * beatCurve(time);
+
+  // --- physics ---
+  for (const p of particles) {
+    if (isDown) {
+      // explosion: burst outward from click point
+      const edx = p.x - mx;
+      const edy = p.y - my;
+      const eDist = Math.sqrt(edx * edx + edy * edy) || 1;
+      const f = EXPLOSION_FORCE / (1 + eDist * 0.008);
+      p.vx += (edx / eDist) * f + (Math.random() - 0.5) * 2;
+      p.vy += (edy / eDist) * f + (Math.random() - 0.5) * 2;
+    } else {
+      // spring toward heart target
+      const tgt = calcTarget(p.bx, p.by, ratio, p.rox, p.roy);
+      p.vx += (tgt.x - p.x) * SPRING_K;
+      p.vy += (tgt.y - p.y) * SPRING_K;
+      // gravity
+      p.vy += GRAVITY;
+    }
+
+    // damping
+    p.vx *= DAMPING;
+    p.vy *= DAMPING;
+
+    // integrate
+    p.x += p.vx;
+    p.y += p.vy;
+
+    // wrap around when too far off screen
+    if (p.y > H + 100) {
+      p.y = -((Math.random() * 200) | 0);
+      p.x = Math.random() * W;
+      p.vx *= 0.3;
+      p.vy *= 0.3;
+    }
+    if (p.x < -150) p.x = -150;
+    if (p.x > W + 150) p.x = W + 150;
   }
+
+  // --- render ---
+  ctx.clearRect(0, 0, W, H);
+
+  for (const p of particles) {
+    ctx.fillStyle = COLOR;
+    ctx.fillRect(p.x | 0, p.y | 0, p.sz, p.sz);
+  }
+
   // text
-  ctx.fillStyle = HEART_COLOR;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const fontSize = Math.min(36, CANVAS_WIDTH * 0.056);
-  ctx.font = `bold ${fontSize}px "Microsoft YaHei", "PingFang SC", sans-serif`;
-  ctx.fillText('我的公主殿下', CANVAS_CENTER_X, CANVAS_CENTER_Y);
-  frame++;
-  requestAnimationFrame(draw);
+  ctx.fillStyle = COLOR;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = 'bold 38px "Microsoft YaHei","PingFang SC",sans-serif';
+  ctx.globalAlpha = 0.95;
+  ctx.fillText("我的公主殿下", CX, CY);
+  ctx.globalAlpha = 1;
+
+  requestAnimationFrame(tick);
 }
 
-draw();
+tick();
 </script>
 </body>
 </html>
